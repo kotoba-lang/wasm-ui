@@ -1,5 +1,7 @@
 # kotoba WASM UI
 
+[![CI](https://github.com/kotoba-lang/wasm-ui/actions/workflows/ci.yml/badge.svg)](https://github.com/kotoba-lang/wasm-ui/actions/workflows/ci.yml)
+
 This project hosts the kotoba DOM-compatible WASM UI substrate and the browser
 reference renderers:
 
