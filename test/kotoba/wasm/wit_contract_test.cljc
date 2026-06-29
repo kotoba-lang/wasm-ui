@@ -1,0 +1,78 @@
+(ns kotoba.wasm.wit-contract-test
+  (:require [clojure.java.io :as io]
+            [clojure.set :as set]
+            [clojure.string :as str]
+            [clojure.test :refer [deftest is testing]]
+            [kotoba.wasm.abi :as abi]))
+
+(def wit-path "wit/kotoba-dom.wit")
+
+(def expected-renderer-fns
+  #{"create-element"
+    "create-text"
+    "set-root"
+    "set-attr"
+    "append-child"
+    "remove-children"
+    "add-event-listener"
+    "present"
+    "poll-event"})
+
+(def abi-op->wit-fn
+  {:create-element "create-element"
+   :create-text "create-text"
+   :set-root "set-root"
+   :set-attr "set-attr"
+   :append-child "append-child"
+   :remove-children "remove-children"
+   :add-event-listener "add-event-listener"})
+
+(defn wit-source []
+  (slurp (io/file wit-path)))
+
+(defn renderer-fns [source]
+  (->> (re-seq #"(?m)^\s*([a-z][a-z0-9-]*):\s*func\b" source)
+       (map second)
+       set))
+
+(def sample-ops
+  [[:dom/create-element 1 :main]
+   [:dom/create-text 2 "hello"]
+   [:dom/set-root 1]
+   [:dom/set-attr 1 :style/width 320]
+   [:dom/append-child 1 2]
+   [:dom/remove-children 1]
+   [:dom/add-event-listener 1 :click 9]])
+
+(deftest wit-renderer-functions-cover-abi-ops
+  (let [source (wit-source)
+        fns (renderer-fns source)
+        batch (abi/encode-batch sample-ops)
+        abi-fns (->> (:ops batch) (map (comp abi-op->wit-fn :op)) set)]
+    (testing "WIT exposes exactly the renderer functions this substrate expects"
+      (is (= expected-renderer-fns fns)))
+    (testing "Every emitted ABI operation has a WIT host function"
+      (is (= #{} (set/difference abi-fns fns))))
+    (testing "present and poll-event remain explicit frame/input boundaries"
+      (is (contains? fns "present"))
+      (is (contains? fns "poll-event")))))
+
+(deftest wit-input-event-shape-matches-normalized-host-event
+  (let [source (wit-source)
+        normalized (abi/host-event {:target 4 :name :click :x 1 :y 2 :value 3 :key :Enter})]
+    (doseq [field ["target: node-id"
+                   "name: string"
+                   "x: float64"
+                   "y: float64"
+                   "value: option<string>"
+                   "key: option<string>"]]
+      (is (str/includes? source field) field))
+    (is (str/includes? source "poll-event: func() -> option<tuple<handler-id, input-event>>"))
+    (is (= {:target 4 :name "click" :x 1.0 :y 2.0 :value "3" :key "Enter"}
+           normalized))))
+
+(deftest host-event-normalizes-input-and-key-events-for-wit
+  (is (= {:target 7 :name "input" :x 0.0 :y 0.0 :value "abc" :key nil}
+         (abi/host-event {:target 7 :name :input :value "abc"})))
+  (is (= {:target 7 :name "key-down" :x 0.0 :y 0.0 :value nil :key "Escape"}
+         (abi/host-event {:target 7 :name :key-down :key :Escape}))))

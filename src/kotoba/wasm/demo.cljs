@@ -1,0 +1,48 @@
+(ns kotoba.wasm.demo
+  "Reference kotoba WASM UI host demo.
+   The app uses reagent/re-frame-shaped APIs. The host renders it through
+   kotoba:dom ABI onto canvas/WebGL instead of browser DOM widgets."
+  (:require [kotoba.wasm.host.webgl :as webgl]
+            [kotoba.wasm.debug :as debug]
+            [kotoba.wasm.runtime :as runtime]
+            [re-frame.core :as rf]))
+
+(defonce runtime-state (atom nil))
+
+(defn app []
+  [:main.demo {:style {:padding 18 :width 620 :background "#121724"}}
+   [:h1 "kotoba DOM on WebGL"]
+   [:p "Reagent/re-frame style UI, rendered without DOM widgets."]
+   [:button {:on-click (fn [_] (rf/dispatch [:inc]))} "increment"]
+   [:span.value {:style {:padding 8}} @(rf/subscribe [:count])]])
+
+(defn install-model! []
+  (rf/clear!)
+  (rf/reg-event-db :init (fn [_ _] {:count 0}))
+  (rf/reg-event-db :inc (fn [db _] (update db :count inc)))
+  (rf/reg-sub :count (fn [db _] (:count db)))
+  (rf/dispatch-sync [:init]))
+
+(defn ^:export init! []
+  (install-model!)
+  (let [gl-canvas (.getElementById js/document "kotoba-gl")
+        text-canvas (.getElementById js/document "kotoba-text")
+        host (webgl/create-host! {:gl-canvas gl-canvas
+                                  :text-canvas text-canvas
+                                  :width 720
+                                  :height 420})
+        rt (runtime/mount! host app)]
+    (reset! runtime-state rt)
+    (webgl/install-pointer-events! host text-canvas
+                                   (fn []
+                                     (swap! runtime-state runtime/pump-events!)))))
+
+(defn ^:export debug-snapshot []
+  (let [rt @runtime-state]
+    (clj->js (debug/snapshot {:backend "webgl"
+                              :runtime rt
+                              :host-state (some-> rt :host webgl/state)}))))
+
+(defn ^:dev/after-load reload! []
+  (when-let [{:keys [host]} @runtime-state]
+    (swap! runtime-state (fn [_] (runtime/mount! host app)))))

@@ -1,0 +1,22 @@
+{
+  "name": "kotoba-wasm-ui",
+  "private": true,
+  "version": "0.1.0",
+  "description": "kotoba DOM-compatible WASM UI substrate with WebGL and WebGPU browser hosts.",
+  "scripts": {
+    "watch:wasm-ui": "shadow-cljs watch wasm-ui",
+    "watch:wasm-webgpu": "shadow-cljs watch wasm-webgpu",
+    "release:wasm-ui": "shadow-cljs release wasm-ui",
+    "release:wasm-webgpu": "shadow-cljs release wasm-webgpu",
+    "compile:wasm-ui": "shadow-cljs compile wasm-ui",
+    "compile:wasm-webgpu": "shadow-cljs compile wasm-webgpu",
+    "compile:all": "npm run compile:wasm-ui && npm run compile:wasm-webgpu",
+    "test:clj": "clojure -M:test",
+    "smoke:wasm-ui": "clojure -M:smoke",
+    "check:wasm-ui": "npm run test:clj && npm run compile:all && npm run smoke:wasm-ui"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "shadow-cljs": "^2.28.20"
+  }
+}
