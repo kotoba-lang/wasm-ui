@@ -56,13 +56,31 @@
                       :children (mapv #(node-tree state %) (:children node)))
       node)))
 
-(defn draw-ops [state]
-  (let [tree (when-let [root (:root state)]
-               (node-tree state root))]
-    (layout/draw-ops tree {:width (:width state)})))
+(defn draw-ops
+  "Projects `state`'s retained node tree to a flat draw-ops vector (see
+   cssom.layout/draw-ops). `measure-text` is an OPTIONAL real
+   text-width function (`(fn [text font-size] width-in-px)`) -- e.g. one
+   backed by a real browser's `CanvasRenderingContext2D.measureText`,
+   which the WebGL/WebGPU hosts already hold as `text-ctx` at the exact
+   point they call this fn (see kotoba.wasm.host.webgl/webgpu's render!)
+   -- passed straight through to cssom.layout/draw-ops' own optional
+   `:measure-text` theme key, so this engine's word-wrap decisions can
+   agree with how a real host will actually paint the already-wrapped
+   text instead of cssom.layout's built-in per-character approximation.
+   Omitting it (every caller before this arg existed, and every host
+   without a real measurement function available) leaves cssom.layout's
+   default char-w-approximation wrap behavior completely unaffected."
+  ([state] (draw-ops state nil))
+  ([state measure-text]
+   (let [tree (when-let [root (:root state)]
+                (node-tree state root))]
+     (layout/draw-ops tree (cond-> {:width (:width state)}
+                             measure-text (assoc :theme {:measure-text measure-text}))))))
 
-(defn with-draw-ops [state]
-  (assoc state :draw-ops (draw-ops state)))
+(defn with-draw-ops
+  ([state] (with-draw-ops state nil))
+  ([state measure-text]
+   (assoc state :draw-ops (draw-ops state measure-text))))
 
 (defn enqueue-event [state event]
   (update state :events (fnil conj []) event))

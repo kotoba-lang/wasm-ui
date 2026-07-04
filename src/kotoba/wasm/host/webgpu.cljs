@@ -63,6 +63,17 @@
      x1 y0 r g b a
      x1 y1 r g b a]))
 
+(defn- measure-text-fn
+  "Builds a (fn [text font-size] width-in-px) backed by `ctx`'s real
+   `CanvasRenderingContext2D.measureText` -- see
+   kotoba.wasm.host.webgl's identical helper for the full rationale
+   (shared here since the WebGPU host paints text through the same
+   Canvas 2D text overlay technique, see render-text! below)."
+  [ctx]
+  (fn [text font-size]
+    (set! (.-font ctx) (str font-size "px ui-sans-serif, system-ui, sans-serif"))
+    (.-width (.measureText ctx text))))
+
 (defn- render-text! [state ops]
   (let [{:keys [text-ctx text-canvas width height dpr]} state]
     (resize-canvas! text-canvas width height dpr)
@@ -107,7 +118,7 @@
       (.submit queue #js [(.finish encoder)]))))
 
 (defn- render! [state]
-  (let [ops (retained/draw-ops state)]
+  (let [ops (retained/draw-ops state (measure-text-fn (:text-ctx state)))]
     (resize-canvas! (:gpu-canvas state) (:width state) (:height state) (:dpr state))
     (render-gpu! state ops)
     (render-text! state ops)

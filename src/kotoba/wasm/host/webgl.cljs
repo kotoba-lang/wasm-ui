@@ -58,6 +58,22 @@
     (set! (.. canvas -style -width) (str width "px"))
     (set! (.. canvas -style -height) (str height "px"))))
 
+(defn- measure-text-fn
+  "Builds a (fn [text font-size] width-in-px) backed by `ctx`'s real
+   `CanvasRenderingContext2D.measureText` -- passed down into
+   cssom.layout/draw-ops (via retained/draw-ops's own optional
+   measure-text arg) so word-wrap decisions agree with the real,
+   proportional system font `render!` actually paints text with below,
+   instead of cssom.layout's built-in per-character monospace-like
+   approximation. Sets `ctx`'s `.font` to match `font-size` before each
+   measurement, the same font string render!'s own :text paint case
+   already uses, so a measured width always corresponds to the font this
+   host is really about to paint the text in."
+  [ctx]
+  (fn [text font-size]
+    (set! (.-font ctx) (str font-size "px ui-sans-serif, system-ui, sans-serif"))
+    (.-width (.measureText ctx text))))
+
 (defn- draw-rect! [gl buffer position-loc color-loc x y w h color]
   (let [[r g b a] (hex->rgba color)
         verts (js/Float32Array.
@@ -76,7 +92,7 @@
 
 (defn- render! [state]
   (let [{:keys [gl text-ctx gl-canvas text-canvas program buffer width height dpr]} state
-        ops (retained/draw-ops state)
+        ops (retained/draw-ops state (measure-text-fn text-ctx))
         position-loc (.getAttribLocation gl program "a_pos")
         resolution-loc (.getUniformLocation gl program "u_resolution")
         color-loc (.getUniformLocation gl program "u_color")]

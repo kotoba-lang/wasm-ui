@@ -76,6 +76,72 @@
       (let [s (retained/queue-focused-event s :input {:value "abc"})]
         (is (empty? (:events s)))))))
 
+;; ---- optional real text-measurement plumbing (retained/draw-ops'
+;; measure-text arg -> cssom.layout/draw-ops' :measure-text theme key) ----
+;;
+;; kotoba.wasm.host.webgl/webgpu's render! already holds a real Canvas 2D
+;; `text-ctx` at the exact point it calls retained/draw-ops (used to
+;; actually paint text with a real proportional system font), so it can
+;; pass a (fn [text font-size] width-in-px) built from that context's
+;; real `measureText` straight through -- see those namespaces'
+;; measure-text-fn. This proves that plumbing genuinely reaches
+;; cssom.layout's word-wrap (not merely threaded through and dropped),
+;; using a fake stand-in for a real Canvas measureText (an honest
+;; substitution for the real browser API this JVM test environment has
+;; no access to, not a mock of the feature under test).
+
+(def ^:private long-text-ops
+  (:ops
+   (abi/encode-batch
+    [[:dom/create-element 1 :main]
+     [:dom/set-root 1]
+     [:dom/set-attr 1 :style/width 108]
+     [:dom/create-text 2 "WWWWW WWWWW"]
+     [:dom/append-child 1 2]])))
+
+(defn- long-text-state []
+  (reduce retained/apply-op
+          (merge retained/base-state {:width 108})
+          long-text-ops))
+
+(defn- fake-proportional-measure
+  "A FAKE (fn [text font-size] width-in-px), standing in for a real
+   browser's CanvasRenderingContext2D.measureText the same way
+   kotoba.wasm.host.webgl/webgpu's measure-text-fn wraps a real one --
+   'W' measures much wider per character than the rest, unlike
+   cssom.layout's built-in per-character approximation, which cannot
+   distinguish characters at all."
+  [text _font-size]
+  (reduce + 0 (map (fn [c] (if (= c \W) 16 (if (= c \space) 6 8))) text)))
+
+(deftest retained-draw-ops-without-measure-text-is-unchanged
+  ;; No measure-text arg (both the 1-arg call, and with-draw-ops' own
+  ;; 1-arg call) -- the exact same output as before this arg existed.
+  (let [s (long-text-state)
+        ops-1arg (retained/draw-ops s)
+        ops-nil (retained/draw-ops s nil)
+        text-ops (filterv #(= :text (:draw/op %)) ops-1arg)]
+    (is (= ops-1arg ops-nil))
+    ;; cssom.layout's default char-w approximation doesn't distinguish
+    ;; 'W' from any other character, so this 11-char, 2-word string
+    ;; comfortably fits on one line at width 108 (100px content-w).
+    (is (= ["WWWWW WWWWW"] (mapv :text text-ops)))))
+
+(deftest retained-draw-ops-with-measure-text-genuinely-changes-wrapping
+  (let [s (long-text-state)
+        ops (retained/draw-ops s fake-proportional-measure)
+        text-ops (filterv #(= :text (:draw/op %)) ops)]
+    ;; With the real (fake, in-test) proportional measurement consulted,
+    ;; "WWWWW WWWWW" (166px measured) no longer fits the same 100px
+    ;; content-w and wraps onto two lines -- a genuinely different wrap
+    ;; decision than the unmeasured case above for the exact same input.
+    (is (= ["WWWWW" "WWWWW"] (mapv :text text-ops)))))
+
+(deftest with-draw-ops-threads-measure-text-through-too
+  (let [s (retained/with-draw-ops (long-text-state) fake-proportional-measure)
+        text-ops (filterv #(= :text (:draw/op %)) (:draw-ops s))]
+    (is (= ["WWWWW" "WWWWW"] (mapv :text text-ops)))))
+
 (deftest retained-event-queue-is-fifo
   (let [s (-> retained/base-state
               (retained/enqueue-event {:handler 1})
