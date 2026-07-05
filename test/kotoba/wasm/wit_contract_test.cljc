@@ -13,6 +13,8 @@
     "set-root"
     "set-attr"
     "append-child"
+    "insert-before"
+    "remove-child"
     "remove-children"
     "add-event-listener"
     "present"
@@ -24,6 +26,8 @@
    :set-root "set-root"
    :set-attr "set-attr"
    :append-child "append-child"
+   :insert-before "insert-before"
+   :remove-child "remove-child"
    :remove-children "remove-children"
    :add-event-listener "add-event-listener"})
 
@@ -41,6 +45,8 @@
    [:dom/set-root 1]
    [:dom/set-attr 1 :style/width 320]
    [:dom/append-child 1 2]
+   [:dom/insert-before 1 2 nil]
+   [:dom/remove-child 1 2]
    [:dom/remove-children 1]
    [:dom/add-event-listener 1 :click 9]])
 
@@ -56,6 +62,13 @@
     (testing "present and poll-event remain explicit frame/input boundaries"
       (is (contains? fns "present"))
       (is (contains? fns "poll-event")))))
+
+(deftest wit-defines-insert-before-and-remove-child-signatures
+  (let [source (wit-source)]
+    (testing "insert-before takes an optional before node-id (nil = append at end, mirrors kotoba.wasm.dom/insert-before)"
+      (is (str/includes? source "insert-before: func(parent: node-id, child: node-id, before: option<node-id>);")))
+    (testing "remove-child mirrors append-child's parent/child shape"
+      (is (str/includes? source "remove-child: func(parent: node-id, child: node-id);")))))
 
 (deftest wit-input-event-shape-matches-normalized-host-event
   (let [source (wit-source)

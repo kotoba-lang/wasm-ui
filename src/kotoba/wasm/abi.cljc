@@ -44,6 +44,14 @@
       (let [[id] xs]
         {:op :remove-children :id id})
 
+      :dom/remove-child
+      (let [[parent child] xs]
+        {:op :remove-child :parent parent :child child})
+
+      :dom/insert-before
+      (let [[parent child before] xs]
+        {:op :insert-before :parent parent :child child :before before})
+
       :dom/add-event-listener
       (let [[id event-name handler-id] xs]
         {:op :add-event-listener
@@ -64,7 +72,7 @@
 (defn validate-batch [batch]
   (when-not (= version (:abi/version batch))
     (throw (ex-info "Unsupported kotoba DOM ABI version" {:batch batch :expected version})))
-  (doseq [{:keys [op id parent child handler name tag text value]} (:ops batch)]
+  (doseq [{:keys [op id parent child before handler name tag text value]} (:ops batch)]
     (case op
       :create-element (when-not (and (int? id) (seq tag)) (throw (ex-info "Invalid create-element op" {:op op :id id :tag tag})))
       :create-text (when-not (and (int? id) (string? text)) (throw (ex-info "Invalid create-text op" {:op op :id id :text text})))
@@ -72,6 +80,8 @@
       :set-attr (when-not (and (int? id) (seq name) (string? value)) (throw (ex-info "Invalid set-attr op" {:op op :id id :name name :value value})))
       :append-child (when-not (and (int? parent) (int? child)) (throw (ex-info "Invalid append-child op" {:op op :parent parent :child child})))
       :remove-children (when-not (int? id) (throw (ex-info "Invalid remove-children op" {:op op :id id})))
+      :remove-child (when-not (and (int? parent) (int? child)) (throw (ex-info "Invalid remove-child op" {:op op :parent parent :child child})))
+      :insert-before (when-not (and (int? parent) (int? child) (or (nil? before) (int? before))) (throw (ex-info "Invalid insert-before op" {:op op :parent parent :child child :before before})))
       :add-event-listener (when-not (and (int? id) (seq name) (int? handler)) (throw (ex-info "Invalid add-event-listener op" {:op op :id id :name name :handler handler})))
       :dispatch-event (when-not (int? handler) (throw (ex-info "Invalid dispatch-event op" {:op op :handler handler})))
       (throw (ex-info "Invalid ABI op kind" {:op op}))))

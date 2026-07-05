@@ -42,6 +42,20 @@
     :remove-children
     (assoc-in state [:nodes (:id op) :children] [])
 
+    :remove-child
+    (update-in state [:nodes (:parent op) :children]
+              (fn [children] (vec (remove #{(:child op)} (or children [])))))
+
+    :insert-before
+    (update-in state [:nodes (:parent op) :children]
+              (fn [children]
+                (let [children (vec (or children []))
+                      before (:before op)]
+                  (if (and before (some #{before} children))
+                    (let [[pre post] (split-with #(not= before %) children)]
+                      (vec (concat pre [(:child op)] post)))
+                    (conj children (:child op))))))
+
     :add-event-listener
     (assoc-in state [:listeners (:id op) (normalize-event-name (:name op))] (:handler op))
 

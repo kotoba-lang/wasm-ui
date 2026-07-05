@@ -23,6 +23,8 @@ interface renderer {
   set-root: func(id: node-id);
   set-attr: func(id: node-id, namespace: option<string>, name: string, value: string);
   append-child: func(parent: node-id, child: node-id);
+  insert-before: func(parent: node-id, child: node-id, before: option<node-id>);
+  remove-child: func(parent: node-id, child: node-id);
   remove-children: func(id: node-id);
   add-event-listener: func(id: node-id, name: string, handler: handler-id);
 

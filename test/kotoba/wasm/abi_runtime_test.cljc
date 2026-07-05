@@ -3,6 +3,7 @@
             [kotoba.wasm.abi :as abi]
             [kotoba.wasm.dom :as dom]
             [kotoba.wasm.host :as host]
+            [kotoba.wasm.host.retained :as retained]
             [cssom.layout :as layout]
             [kotoba.wasm.runtime :as runtime]
             [re-frame.core :as rf]
@@ -93,11 +94,81 @@
                         ["Invalid add-event-listener" [:dom/add-event-listener 1 nil 9]]
                         ["Invalid add-event-listener" [:dom/add-event-listener 1 :click nil]]
                         ["Invalid append-child" [:dom/append-child 1 nil]]
-                        ["Invalid remove-children" [:dom/remove-children nil]]]]
+                        ["Invalid remove-children" [:dom/remove-children nil]]
+                        ["Invalid remove-child" [:dom/remove-child nil 2]]
+                        ["Invalid remove-child" [:dom/remove-child 1 nil]]
+                        ["Invalid insert-before" [:dom/insert-before nil 2 3]]
+                        ["Invalid insert-before" [:dom/insert-before 1 nil 3]]
+                        ["Invalid insert-before" [:dom/insert-before 1 2 "bad"]]]]
     (is (thrown-with-msg? clojure.lang.ExceptionInfo (re-pattern message)
                           (abi/validate-batch (abi/encode-batch [op])))))
   (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Unknown"
                         (abi/encode-batch [[:dom/nope 1]]))))
+
+(deftest abi-encodes-insert-before-and-remove-child-ops
+  ;; Before this fix, kotoba.wasm.dom/insert-before and remove-child's own
+  ;; emitted ops ([:dom/insert-before parent child before] /
+  ;; [:dom/remove-child parent child], see kotoba.wasm.dom.cljc) had no
+  ;; kotoba.wasm.abi/op->record case and fell through to its default branch,
+  ;; throwing "Unknown kotoba DOM op". This proves both now encode to the
+  ;; same {:op ... :parent ... :child ...}-shaped record convention
+  ;; append-child/remove-children already use, and validate cleanly.
+  (is (= {:abi/version 1
+          :ops [{:op :insert-before :parent 1 :child 2 :before 3}]}
+         (abi/encode-batch [[:dom/insert-before 1 2 3]])))
+  (testing "insert-before's before id is optional (nil means append at the end, mirrors kotoba.wasm.dom/insert-before's own fallback)"
+    (is (= {:abi/version 1
+            :ops [{:op :insert-before :parent 1 :child 2 :before nil}]}
+           (abi/encode-batch [[:dom/insert-before 1 2 nil]]))))
+  (is (= {:abi/version 1
+          :ops [{:op :remove-child :parent 1 :child 2}]}
+         (abi/encode-batch [[:dom/remove-child 1 2]])))
+  (is (= (abi/encode-batch [[:dom/insert-before 1 2 3]])
+         (abi/validate-batch (abi/encode-batch [[:dom/insert-before 1 2 3]]))))
+  (is (= (abi/encode-batch [[:dom/remove-child 1 2]])
+         (abi/validate-batch (abi/encode-batch [[:dom/remove-child 1 2]])))))
+
+(deftest dom-insert-before-and-remove-child-ops-replay-through-abi-and-retained-state
+  ;; End-to-end: kotoba.wasm.dom's own document model -> the ops it emits ->
+  ;; kotoba.wasm.abi/encode-batch (host/commit!'s exact encode path) ->
+  ;; kotoba.wasm.host.retained/apply-op (the same reducer the webgl/webgpu
+  ;; hosts use). All three layers must agree on the resulting child order.
+  (let [[root document] (dom/create-element dom/empty-document :main)
+        document (dom/set-root document root)
+        [a document] (dom/create-element document :span)
+        [b document] (dom/create-element document :span)
+        document (-> document
+                    (dom/append-child root a)
+                    (dom/append-child root b))
+        [c document] (dom/create-element document :span)
+        document (dom/insert-before document root c b) ; [a b] -> [a c b]
+        document (dom/remove-child document root a)    ; [a c b] -> [c b]
+        [ops _document] (dom/consume-ops document)
+        batch (abi/validate-batch (abi/encode-batch ops))
+        retained-state (reduce retained/apply-op retained/base-state (:ops batch))]
+    (testing "kotoba.wasm.dom's own document model reflects the edits"
+      (is (= [c b] (get-in document [:nodes root :children]))))
+    (testing "the ABI batch carries both ops through validate-batch without throwing"
+      (is (some #(= :insert-before (:op %)) (:ops batch)))
+      (is (some #(= :remove-child (:op %)) (:ops batch))))
+    (testing "replaying the batch through the shared retained-state reducer agrees with the dom document"
+      (is (= [c b] (get-in retained-state [:nodes root :children]))))))
+
+(deftest host-commit-applies-insert-before-and-remove-child-ops
+  ;; host/commit! (used by runtime/mount!/rerender!) calls abi/encode-batch
+  ;; then applies every record to the host -- this is the exact call site
+  ;; that used to crash with "Unknown kotoba DOM op" for these two ops.
+  (let [dom-host (host/recording-host)]
+    (host/commit! dom-host [[:dom/create-element 1 :main]
+                           [:dom/set-root 1]
+                           [:dom/create-element 2 :span]
+                           [:dom/append-child 1 2]
+                           [:dom/create-element 3 :span]
+                           [:dom/insert-before 1 3 2]
+                           [:dom/remove-child 1 2]])
+    (is (= [:create-element :set-root :create-element :append-child
+            :create-element :insert-before :remove-child]
+           (mapv :op (:ops (host/recorded dom-host)))))))
 
 (deftest dom-document-ops-cover-removal-dispatch-and-consume
   (let [[root-id document] (dom/create-element dom/empty-document :main)
