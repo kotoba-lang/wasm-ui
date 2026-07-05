@@ -142,6 +142,68 @@
         text-ops (filterv #(= :text (:draw/op %)) (:draw-ops s))]
     (is (= ["WWWWW" "WWWWW"] (mapv :text text-ops)))))
 
+;; ---- kotoba.wasm.host.retained/apply-op's :remove-child / :insert-before
+;; cases -- before this fix, these ops had no apply-op case and silently fell
+;; through to the default `state` branch (a no-op), while abi/op->record
+;; would throw first for any caller that goes through the real ABI encode
+;; path (host/commit!, abi_runtime_test's host-commit-applies-... test). ----
+
+(defn- retained-state-for [ops]
+  (reduce retained/apply-op
+          retained/base-state
+          (:ops (abi/encode-batch ops))))
+
+(deftest retained-remove-child-detaches-node-from-parents-children
+  (let [s (retained-state-for
+           [[:dom/create-element 1 :main]
+            [:dom/set-root 1]
+            [:dom/create-element 2 :span]
+            [:dom/create-element 3 :span]
+            [:dom/append-child 1 2]
+            [:dom/append-child 1 3]
+            [:dom/remove-child 1 2]])]
+    (testing "the removed child id is gone from the parent's children vector"
+      (is (= [3] (get-in s [:nodes 1 :children]))))
+    (testing "the detached node is not deleted from the flat node map -- it stays
+              as an unreferenced entry, mirroring how :remove-children (plural)
+              already leaves its former children in :nodes rather than pruning them"
+      (is (= :span (get-in s [:nodes 2 :tag]))))
+    (testing "node-tree only walks reachable children, so the detached node no
+              longer shows up in the rendered tree even though its :nodes entry survives"
+      (is (= [:span] (mapv :tag (:children (retained/node-tree s 1))))))))
+
+(deftest retained-insert-before-places-node-ahead-of-reference-sibling
+  (let [s (retained-state-for
+           [[:dom/create-element 1 :main]
+            [:dom/set-root 1]
+            [:dom/create-element 2 :a]
+            [:dom/create-element 3 :b]
+            [:dom/append-child 1 2]
+            [:dom/append-child 1 3]
+            [:dom/create-element 4 :c]
+            [:dom/insert-before 1 4 3]])]
+    (is (= [2 4 3] (get-in s [:nodes 1 :children])))))
+
+(deftest retained-insert-before-falls-back-to-append-without-a-live-reference-sibling
+  (testing "a nil before-id appends at the end (mirrors kotoba.wasm.dom/insert-before's own fallback)"
+    (let [s (retained-state-for
+             [[:dom/create-element 1 :main]
+              [:dom/set-root 1]
+              [:dom/create-element 2 :a]
+              [:dom/append-child 1 2]
+              [:dom/create-element 3 :b]
+              [:dom/insert-before 1 3 nil]])]
+      (is (= [2 3] (get-in s [:nodes 1 :children])))))
+  (testing "a before-id that is not (or no longer) a child also falls back to append instead of crashing or silently dropping the insert"
+    (let [s (retained-state-for
+             [[:dom/create-element 1 :main]
+              [:dom/set-root 1]
+              [:dom/create-element 2 :a]
+              [:dom/append-child 1 2]
+              [:dom/create-element 3 :b]
+              [:dom/insert-before 1 3 999]])]
+      (is (= [2 3] (get-in s [:nodes 1 :children]))))))
+
 (deftest retained-event-queue-is-fifo
   (let [s (-> retained/base-state
               (retained/enqueue-event {:handler 1})
