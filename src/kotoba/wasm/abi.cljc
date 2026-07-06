@@ -82,8 +82,20 @@
       :remove-children (when-not (int? id) (throw (ex-info "Invalid remove-children op" {:op op :id id})))
       :remove-child (when-not (and (int? parent) (int? child)) (throw (ex-info "Invalid remove-child op" {:op op :parent parent :child child})))
       :insert-before (when-not (and (int? parent) (int? child) (or (nil? before) (int? before))) (throw (ex-info "Invalid insert-before op" {:op op :parent parent :child child :before before})))
-      :add-event-listener (when-not (and (int? id) (seq name) (int? handler)) (throw (ex-info "Invalid add-event-listener op" {:op op :id id :name name :handler handler})))
-      :dispatch-event (when-not (int? handler) (throw (ex-info "Invalid dispatch-event op" {:op op :handler handler})))
+      ;; `handler` is an OPAQUE identifier, not necessarily numeric -- the
+      ;; real QuickJS webapi shim's own `__kotobaHandlerId()` (quickjs_wasm.cljc)
+      ;; generates STRING ids ("handler-1", "handler-2", ...), and the
+      ;; window/document global-listener path uses its own string scheme
+      ;; ("global-" + target + "-" + eventType). The old `(int? handler)`
+      ;; check rejected every real script-registered listener outright --
+      ;; a pre-existing, previously-latent bug (nothing before this exercised
+      ;; a real addEventListener() call all the way through this real
+      ;; validate-batch/commit! pipeline) confirmed via live-Chrome
+      ;; verification: any real page calling addEventListener() crashed the
+      ;; whole commit with "Invalid add-event-listener op" the instant this
+      ;; ABI layer's own validation ran.
+      :add-event-listener (when-not (and (int? id) (seq name) (some? handler)) (throw (ex-info "Invalid add-event-listener op" {:op op :id id :name name :handler handler})))
+      :dispatch-event (when-not (some? handler) (throw (ex-info "Invalid dispatch-event op" {:op op :handler handler})))
       (throw (ex-info "Invalid ABI op kind" {:op op}))))
   batch)
 

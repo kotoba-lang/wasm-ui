@@ -105,6 +105,31 @@
   (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Unknown"
                         (abi/encode-batch [[:dom/nope 1]]))))
 
+(deftest abi-batch-validation-accepts-real-string-handler-ids
+  ;; The confirmed repro, found via live-Chrome verification of a genuinely
+  ;; unrelated fix (kotoba.wasm.dom's multi-listener bridging): the real
+  ;; QuickJS webapi shim's own __kotobaHandlerId() (quickjs_wasm.cljc)
+  ;; generates STRING handler-ids ("handler-1", "handler-2", ...), and the
+  ;; window/document global-listener path uses its own string scheme
+  ;; ("global-" + target + "-" + eventType) -- but validate-batch's
+  ;; :add-event-listener/:dispatch-event cases required `(int? handler)`,
+  ;; so ANY real script calling addEventListener() crashed the whole
+  ;; commit with "Invalid add-event-listener op" the instant a real batch
+  ;; reached this validation -- a pre-existing, previously-latent bug
+  ;; nothing had exercised end to end before (host/commit! is the real
+  ;; commit path every real host, including the live demo, uses).
+  (is (= "handler-1"
+         (:handler (first (:ops (abi/validate-batch
+                                  (abi/encode-batch [[:dom/add-event-listener 1 :click "handler-1"]])))))))
+  (is (= "handler-1"
+         (:handler (first (:ops (abi/validate-batch
+                                  (abi/encode-batch [[:dom/dispatch-event "handler-1" {:type :click}]])))))))
+  (testing "nil is still rejected -- only nil, not every non-numeric value"
+    (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Invalid add-event-listener"
+                          (abi/validate-batch (abi/encode-batch [[:dom/add-event-listener 1 :click nil]]))))
+    (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Invalid dispatch-event"
+                          (abi/validate-batch (abi/encode-batch [[:dom/dispatch-event nil {:type :click}]]))))))
+
 (deftest abi-encodes-insert-before-and-remove-child-ops
   ;; Before this fix, kotoba.wasm.dom/insert-before and remove-child's own
   ;; emitted ops ([:dom/insert-before parent child before] /
@@ -231,8 +256,13 @@
         input-id (->> (get-in mounted [:document :nodes])
                       (some (fn [[id node]]
                               (when (= "name" (get-in node [:attrs :id])) id))))
-        input-handler (get-in mounted [:document :listeners input-id :input])
-        key-handler (get-in mounted [:document :listeners input-id :key-down])
+        ;; :listeners now holds an ORDERED collection of handler-ids per
+        ;; (node, event-type), not a single scalar -- see kotoba.wasm.dom's
+        ;; own multi-listener fix. Exactly one reagent-attached listener is
+        ;; registered here, so `first` recovers the same real handler-id
+        ;; this test always meant to grab.
+        input-handler (first (get-in mounted [:document :listeners input-id :input]))
+        key-handler (first (get-in mounted [:document :listeners input-id :key-down]))
         dom-host (host/recording-host [{:handler input-handler
                                         :target input-id
                                         :name :input

@@ -84,15 +84,62 @@
       (assoc-in [:nodes node-id :children] [])
       (emit [:dom/remove-children node-id])))
 
-(defn add-event-listener [document node-id event-name handler-id]
+(defn add-event-listener
+  "Registers `handler-id` for `event-name` on `node-id`. Real HTML5
+   `addEventListener` supports MULTIPLE independent listeners for the same
+   (element, event-type) pair -- e.g. two separate scripts each attaching
+   their own click handler to the same button -- so this keeps an ORDERED
+   collection of handler-ids per (node-id, event-name), not a single scalar
+   (a real, previously-fixed bug: a second `addEventListener` call used to
+   silently overwrite the first, confirmed via direct REPL reproduction
+   before this fix -- only the most-recently-added listener ever fired).
+   Adding the exact same `handler-id` twice is a no-op (idempotent), matching
+   real `addEventListener` semantics for a duplicate registration. Mirrors
+   `browser.compat.quickjs-execution`'s own pre-existing, already-correct
+   `{event-type {handler-id true}}` model for `window`/`document` global
+   targets -- this was previously the ONE place multi-listener semantics
+   were implemented; ordinary element nodes never got the same fix."
+  [document node-id event-name handler-id]
   (-> document
-      (assoc-in [:listeners node-id (keyword event-name)] handler-id)
+      (update-in [:listeners node-id (keyword event-name)]
+                 (fn [ids]
+                   (let [ids (or ids [])]
+                     (if (some #{handler-id} ids) ids (conj ids handler-id)))))
       (emit [:dom/add-event-listener node-id (keyword event-name) handler-id])))
 
-(defn dispatch-event [document node-id event-name event]
-  (if-let [handler-id (get-in document [:listeners node-id (keyword event-name)])]
-    (emit document [:dom/dispatch-event handler-id event])
-    document))
+(defn remove-event-listener
+  "Removes ONLY `handler-id` from `node-id`'s listeners for `event-name`,
+   leaving every other registered listener for that same (element,
+   event-type) pair untouched -- previously the only `remove-event-listener`
+   in this codebase lived in `browser.dom-bridge` and `dissoc`'d the WHOLE
+   event-type entry, ignoring which `handler-id` was actually asked for, so
+   removing ONE listener silently wiped every listener for that event type
+   on that node."
+  [document node-id event-name handler-id]
+  (let [event-name (keyword event-name)
+        remaining (vec (remove #{handler-id} (get-in document [:listeners node-id event-name])))]
+    (-> document
+        (update-in [:listeners node-id]
+                   (fn [by-type]
+                     (if (seq remaining)
+                       (assoc by-type event-name remaining)
+                       (dissoc by-type event-name))))
+        (emit [:dom/remove-event-listener node-id event-name handler-id]))))
+
+(defn dispatch-event
+  "Emits one `:dom/dispatch-event` op per handler-id currently registered
+   for `event-name` on `node-id`, in REGISTRATION ORDER -- matching real
+   `addEventListener` dispatch order and this codebase's own existing
+   convention of one `:dom/dispatch-event` op per handler invocation (see
+   `browser.document-input`'s own bubble-phase dispatch, which already
+   emits multiple such ops up the ancestor chain for a single logical
+   event)."
+  [document node-id event-name event]
+  (let [ids (seq (get-in document [:listeners node-id (keyword event-name)]))]
+    (reduce (fn [document handler-id]
+              (emit document [:dom/dispatch-event handler-id event]))
+            document
+            ids)))
 
 (defn node [document node-id]
   (get-in document [:nodes node-id]))
