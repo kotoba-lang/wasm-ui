@@ -70,6 +70,22 @@
       (let [[handler event] xs]
         {:op :dispatch-event :handler handler :event event})
 
+      :dom/set-text
+      (let [[id text] xs]
+        {:op :set-text :id id :text (str text)})
+
+      :dom/create-fragment
+      (let [[id] xs]
+        {:op :create-fragment :id id})
+
+      :dom/focus
+      (let [[id] xs]
+        {:op :focus :id id})
+
+      :dom/blur
+      (let [[id] xs]
+        {:op :blur :id id})
+
       (throw (ex-info "Unknown kotoba DOM op" {:op op})))))
 
 (defn encode-batch [ops]
@@ -111,6 +127,20 @@
       ;; missed for this op).
       :remove-event-listener (when-not (and (int? id) (seq name) (some? handler)) (throw (ex-info "Invalid remove-event-listener op" {:op op :id id :name name :handler handler})))
       :dispatch-event (when-not (some? handler) (throw (ex-info "Invalid dispatch-event op" {:op op :handler handler})))
+      ;; The exact same "Unknown kotoba DOM op" crash class as
+      ;; :remove-event-listener above, for four MORE real, common,
+      ;; JS-reachable ops browser.dom-bridge already emits
+      ;; (element.focus()/.blur(), a Text node's .data/.nodeValue
+      ;; setter, document.createDocumentFragment()) -- op->record had no
+      ;; case for any of them either, so encode-batch itself crashed the
+      ;; ENTIRE host/commit! batch (every other legitimate mutation
+      ;; queued alongside it too) the instant a real page ever exercised
+      ;; one, confirmed via direct REPL reproduction before touching
+      ;; source.
+      :set-text (when-not (and (int? id) (string? text)) (throw (ex-info "Invalid set-text op" {:op op :id id :text text})))
+      :create-fragment (when-not (int? id) (throw (ex-info "Invalid create-fragment op" {:op op :id id})))
+      :focus (when-not (int? id) (throw (ex-info "Invalid focus op" {:op op :id id})))
+      :blur (when-not (int? id) (throw (ex-info "Invalid blur op" {:op op :id id})))
       (throw (ex-info "Invalid ABI op kind" {:op op}))))
   batch)
 

@@ -56,6 +56,32 @@
             button (first (:children tree))]
         (is (= #{:key-down} (set (:listeners button))))))))
 
+(deftest retained-set-text-updates-an-existing-text-nodes-content
+  ;; Previously entirely unhandled -- a real Text node's .data/.nodeValue
+  ;; setter (or Text.splitText()) emits this op, and without a case here
+  ;; the retained-tree host's own copy of that text never changed.
+  (let [ops (:ops (abi/encode-batch [[:dom/create-text 50 "old"] [:dom/set-text 50 "new"]]))
+        s (reduce retained/apply-op (state) ops)]
+    (is (= "new" (get-in s [:nodes 50 :text])))))
+
+(deftest retained-create-fragment-creates-a-document-fragment-node
+  (let [ops (:ops (abi/encode-batch [[:dom/create-fragment 60]]))
+        s (reduce retained/apply-op (state) ops)]
+    (is (= {:node/id 60 :node/type :document-fragment :children []}
+           (get-in s [:nodes 60])))))
+
+(deftest retained-focus-then-blur-the-same-node-clears-focus
+  (let [ops (:ops (abi/encode-batch [[:dom/focus 2] [:dom/blur 2]]))
+        s (reduce retained/apply-op (state) ops)]
+    (is (nil? (:focus s)))))
+
+(deftest retained-blur-on-a-different-node-does-not-steal-focus
+  ;; Real HTMLElement.blur() only clears focus when the blurring element
+  ;; IS the currently-focused one.
+  (let [ops (:ops (abi/encode-batch [[:dom/focus 2] [:dom/blur 999]]))
+        s (reduce retained/apply-op (state) ops)]
+    (is (= 2 (:focus s)))))
+
 (deftest retained-draw-ops-and-hit-test-are-deterministic
   (let [s (retained/with-draw-ops (state))
         button-node (some #(when (and (= :node (:draw/op %))

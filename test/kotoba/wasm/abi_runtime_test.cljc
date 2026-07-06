@@ -101,7 +101,11 @@
                         ["Invalid remove-child" [:dom/remove-child 1 nil]]
                         ["Invalid insert-before" [:dom/insert-before nil 2 3]]
                         ["Invalid insert-before" [:dom/insert-before 1 nil 3]]
-                        ["Invalid insert-before" [:dom/insert-before 1 2 "bad"]]]]
+                        ["Invalid insert-before" [:dom/insert-before 1 2 "bad"]]
+                        ["Invalid set-text" [:dom/set-text nil "hello"]]
+                        ["Invalid create-fragment" [:dom/create-fragment nil]]
+                        ["Invalid focus" [:dom/focus nil]]
+                        ["Invalid blur" [:dom/blur nil]]]]
     (is (thrown-with-msg? clojure.lang.ExceptionInfo (re-pattern message)
                           (abi/validate-batch (abi/encode-batch [op])))))
   (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Unknown"
@@ -147,6 +151,34 @@
          (abi/encode-batch [[:dom/remove-event-listener 1 :click "handler-1"]])))
   (is (= (abi/encode-batch [[:dom/remove-event-listener 1 :click "handler-1"]])
          (abi/validate-batch (abi/encode-batch [[:dom/remove-event-listener 1 :click "handler-1"]])))))
+
+(deftest abi-encodes-and-validates-focus-blur-set-text-and-create-fragment
+  ;; Four MORE real, common, JS-reachable ops browser.dom-bridge already
+  ;; emits (element.focus()/.blur(), a Text node's .data/.nodeValue
+  ;; setter, document.createDocumentFragment()) that op->record had NO
+  ;; case for at all -- encode-batch itself threw "Unknown kotoba DOM op"
+  ;; the instant a real page ever called any of them, crashing the ENTIRE
+  ;; host/commit! batch (every other legitimate mutation queued alongside
+  ;; it too), confirmed via direct REPL reproduction before this fix. The
+  ;; exact same bug shape/severity already fixed for :add-event-listener/
+  ;; :remove-event-listener/:insert-before/:remove-child above.
+  (is (= {:abi/version 1 :ops [{:op :set-text :id 1 :text "hello"}]}
+         (abi/encode-batch [[:dom/set-text 1 "hello"]])))
+  (is (= {:abi/version 1 :ops [{:op :create-fragment :id 5}]}
+         (abi/encode-batch [[:dom/create-fragment 5]])))
+  (is (= {:abi/version 1 :ops [{:op :focus :id 7}]}
+         (abi/encode-batch [[:dom/focus 7]])))
+  (is (= {:abi/version 1 :ops [{:op :blur :id 7}]}
+         (abi/encode-batch [[:dom/blur 7]])))
+  (doseq [op [[:dom/set-text 1 "hello"] [:dom/create-fragment 5] [:dom/focus 7] [:dom/blur 7]]]
+    (is (= (abi/encode-batch [op]) (abi/validate-batch (abi/encode-batch [op])))
+        (str "validate-batch must accept the real encoded record for " op " unchanged")))
+  (doseq [[message op] [["Invalid set-text" [:dom/set-text nil "hello"]]
+                        ["Invalid create-fragment" [:dom/create-fragment nil]]
+                        ["Invalid focus" [:dom/focus nil]]
+                        ["Invalid blur" [:dom/blur nil]]]]
+    (is (thrown-with-msg? clojure.lang.ExceptionInfo (re-pattern message)
+                          (abi/validate-batch (abi/encode-batch [op]))))))
 
 (deftest abi-encodes-insert-before-and-remove-child-ops
   ;; Before this fix, kotoba.wasm.dom/insert-before and remove-child's own
@@ -226,6 +258,23 @@
                            [:dom/add-event-listener 1 :click "handler-1"]
                            [:dom/remove-event-listener 1 :click "handler-1"]])
     (is (= [:create-element :set-root :add-event-listener :remove-event-listener]
+           (mapv :op (:ops (host/recorded dom-host)))))))
+
+(deftest host-commit-applies-focus-blur-set-text-and-create-fragment-ops
+  ;; This is the exact call site that used to crash the ENTIRE batch --
+  ;; every op here (including the perfectly ordinary create-element/
+  ;; set-root pair) would have been dropped the instant :dom/focus (or
+  ;; any of its three siblings) was reached, confirmed via direct REPL
+  ;; reproduction before this fix.
+  (let [dom-host (host/recording-host)]
+    (host/commit! dom-host [[:dom/create-element 1 :input]
+                           [:dom/set-root 1]
+                           [:dom/create-text 2 "old"]
+                           [:dom/set-text 2 "new"]
+                           [:dom/create-fragment 3]
+                           [:dom/focus 1]
+                           [:dom/blur 1]])
+    (is (= [:create-element :set-root :create-text :set-text :create-fragment :focus :blur]
            (mapv :op (:ops (host/recorded dom-host)))))))
 
 (deftest host-commit-applies-insert-before-and-remove-child-ops

@@ -71,6 +71,28 @@
     ;; that real dispatch logic elsewhere had already stopped calling.
     (update-in state [:listeners (:id op)] dissoc (normalize-event-name (:name op)))
 
+    ;; Sibling gap to :remove-event-listener above: kotoba.wasm.abi had no
+    ;; case for these four ops either (a real crash, fixed alongside this),
+    ;; and this state layer never applied them -- confirmed via direct
+    ;; REPL reproduction before touching source.
+    :set-text
+    (assoc-in state [:nodes (:id op) :text] (:text op))
+
+    :create-fragment
+    (assoc-in state [:nodes (:id op)] {:node/id (:id op)
+                                       :node/type :document-fragment
+                                       :children []})
+
+    :focus
+    (assoc state :focus (:id op))
+
+    :blur
+    ;; Real HTMLElement.blur() only clears focus when the blurring
+    ;; element IS the currently-focused one -- blurring some OTHER,
+    ;; not-currently-focused element must not steal focus away from a
+    ;; genuinely different, already-focused element.
+    (if (= (:focus state) (:id op)) (dissoc state :focus) state)
+
     state))
 
 (defn node-tree [state id]
