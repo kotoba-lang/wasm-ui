@@ -39,6 +39,23 @@
     (is (= #{:click :key-down} (set (:listeners button))))
     (is (= ["Run"] (:children button)))))
 
+(deftest retained-remove-event-listener-clears-listeners
+  ;; Previously entirely unhandled (falling through to the default `state`
+  ;; below, a silent no-op) -- a real removeEventListener() call would
+  ;; leave :listeners stale, so a node's own node-tree projection would
+  ;; keep reporting a listener real dispatch logic elsewhere had already
+  ;; stopped calling.
+  (let [remove-ops (:ops (abi/encode-batch [[:dom/remove-event-listener 2 :click 99]]))
+        s (reduce retained/apply-op (state) remove-ops)]
+    (testing "the removed event-type is gone"
+      (is (not (contains? (get-in s [:listeners 2]) :click))))
+    (testing "the OTHER event-type on the same node is untouched"
+      (is (= 100 (get-in s [:listeners 2 :key-down]))))
+    (testing "node-tree no longer reports the removed listener"
+      (let [tree (retained/node-tree s 1)
+            button (first (:children tree))]
+        (is (= #{:key-down} (set (:listeners button))))))))
+
 (deftest retained-draw-ops-and-hit-test-are-deterministic
   (let [s (retained/with-draw-ops (state))
         button-node (some #(when (and (= :node (:draw/op %))

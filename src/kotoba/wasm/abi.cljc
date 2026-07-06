@@ -59,6 +59,13 @@
          :name (maybe-name event-name)
          :handler handler-id})
 
+      :dom/remove-event-listener
+      (let [[id event-name handler-id] xs]
+        {:op :remove-event-listener
+         :id id
+         :name (maybe-name event-name)
+         :handler handler-id})
+
       :dom/dispatch-event
       (let [[handler event] xs]
         {:op :dispatch-event :handler handler :event event})
@@ -95,6 +102,14 @@
       ;; whole commit with "Invalid add-event-listener op" the instant this
       ;; ABI layer's own validation ran.
       :add-event-listener (when-not (and (int? id) (seq name) (some? handler)) (throw (ex-info "Invalid add-event-listener op" {:op op :id id :name name :handler handler})))
+      ;; Same opaque, non-numeric `handler` shape as :add-event-listener
+      ;; above -- previously missing entirely, so encode-batch itself threw
+      ;; "Unknown kotoba DOM op" on any real remove-event-listener call
+      ;; before validate-batch ever ran, confirmed via direct REPL
+      ;; reproduction (the sibling bug this file's :add-event-listener/
+      ;; :insert-before/:remove-child fixes already covered was simply
+      ;; missed for this op).
+      :remove-event-listener (when-not (and (int? id) (seq name) (some? handler)) (throw (ex-info "Invalid remove-event-listener op" {:op op :id id :name name :handler handler})))
       :dispatch-event (when-not (some? handler) (throw (ex-info "Invalid dispatch-event op" {:op op :handler handler})))
       (throw (ex-info "Invalid ABI op kind" {:op op}))))
   batch)

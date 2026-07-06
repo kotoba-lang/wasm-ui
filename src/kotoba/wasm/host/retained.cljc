@@ -59,6 +59,18 @@
     :add-event-listener
     (assoc-in state [:listeners (:id op) (normalize-event-name (:name op))] (:handler op))
 
+    :remove-event-listener
+    ;; Previously entirely unhandled here (falling through to the default
+    ;; `state` below, a silent no-op) -- kotoba.wasm.abi's own encode/
+    ;; validate-batch had no case for this op at all either (a real crash,
+    ;; "Unknown kotoba DOM op", confirmed via direct REPL reproduction),
+    ;; so no real removeEventListener() call had ever reached this far
+    ;; before. Without this case, :listeners stayed stale after a real
+    ;; removal -- a node's own node-tree projection (and this session's
+    ;; own draw-ops :listeners field) would keep reporting a listener
+    ;; that real dispatch logic elsewhere had already stopped calling.
+    (update-in state [:listeners (:id op)] dissoc (normalize-event-name (:name op)))
+
     state))
 
 (defn node-tree [state id]

@@ -93,6 +93,8 @@
                         ["Invalid set-attr" [:dom/set-attr 1 nil "x"]]
                         ["Invalid add-event-listener" [:dom/add-event-listener 1 nil 9]]
                         ["Invalid add-event-listener" [:dom/add-event-listener 1 :click nil]]
+                        ["Invalid remove-event-listener" [:dom/remove-event-listener 1 nil 9]]
+                        ["Invalid remove-event-listener" [:dom/remove-event-listener 1 :click nil]]
                         ["Invalid append-child" [:dom/append-child 1 nil]]
                         ["Invalid remove-children" [:dom/remove-children nil]]
                         ["Invalid remove-child" [:dom/remove-child nil 2]]
@@ -129,6 +131,22 @@
                           (abi/validate-batch (abi/encode-batch [[:dom/add-event-listener 1 :click nil]]))))
     (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Invalid dispatch-event"
                           (abi/validate-batch (abi/encode-batch [[:dom/dispatch-event nil {:type :click}]]))))))
+
+(deftest abi-encodes-and-validates-remove-event-listener
+  ;; Sibling gap to the add-event-listener/insert-before/remove-child fixes
+  ;; above: kotoba.wasm.dom/remove-event-listener's own emitted op
+  ;; ([:dom/remove-event-listener node-id event-name handler-id]) had NO
+  ;; kotoba.wasm.abi/op->record case at all, so encode-batch itself threw
+  ;; "Unknown kotoba DOM op" the instant a real removeEventListener() call
+  ;; reached host/commit! (the same real commit path every real host,
+  ;; including the live demo, uses) -- confirmed via direct REPL
+  ;; reproduction before this fix. Same opaque, non-numeric handler shape
+  ;; as add-event-listener, so a real string handler-id must validate too.
+  (is (= {:abi/version 1
+          :ops [{:op :remove-event-listener :id 1 :name "click" :handler "handler-1"}]}
+         (abi/encode-batch [[:dom/remove-event-listener 1 :click "handler-1"]])))
+  (is (= (abi/encode-batch [[:dom/remove-event-listener 1 :click "handler-1"]])
+         (abi/validate-batch (abi/encode-batch [[:dom/remove-event-listener 1 :click "handler-1"]])))))
 
 (deftest abi-encodes-insert-before-and-remove-child-ops
   ;; Before this fix, kotoba.wasm.dom/insert-before and remove-child's own
@@ -178,6 +196,37 @@
       (is (some #(= :remove-child (:op %)) (:ops batch))))
     (testing "replaying the batch through the shared retained-state reducer agrees with the dom document"
       (is (= [c b] (get-in retained-state [:nodes root :children]))))))
+
+(deftest dom-remove-event-listener-ops-replay-through-abi-and-retained-state
+  ;; End-to-end: kotoba.wasm.dom's own document model -> the ops it emits ->
+  ;; kotoba.wasm.abi/encode-batch (host/commit!'s exact encode path) ->
+  ;; kotoba.wasm.host.retained/apply-op (the same reducer the webgl/webgpu
+  ;; hosts use, and the SAME place a second, previously-latent gap was
+  ;; found alongside the abi.cljc fix: :remove-event-listener had no case
+  ;; there either, silently leaving :listeners stale after a real removal).
+  (let [[root document] (dom/create-element dom/empty-document :button)
+        document (dom/set-root document root)
+        document (dom/add-event-listener document root "click" "handler-1")
+        document (dom/remove-event-listener document root "click" "handler-1")
+        [ops _document] (dom/consume-ops document)
+        batch (abi/validate-batch (abi/encode-batch ops))
+        retained-state (reduce retained/apply-op retained/base-state (:ops batch))]
+    (testing "the ABI batch carries the remove op through validate-batch without throwing"
+      (is (some #(= :remove-event-listener (:op %)) (:ops batch))))
+    (testing "replaying the batch through the shared retained-state reducer clears the listener"
+      (is (= {} (get-in retained-state [:listeners root]))))))
+
+(deftest host-commit-applies-add-and-remove-event-listener-ops
+  ;; host/commit! (used by runtime/mount!/rerender!) calls abi/encode-batch
+  ;; then applies every record to the host -- this is the exact call site
+  ;; that used to crash with "Unknown kotoba DOM op" for remove-event-listener.
+  (let [dom-host (host/recording-host)]
+    (host/commit! dom-host [[:dom/create-element 1 :button]
+                           [:dom/set-root 1]
+                           [:dom/add-event-listener 1 :click "handler-1"]
+                           [:dom/remove-event-listener 1 :click "handler-1"]])
+    (is (= [:create-element :set-root :add-event-listener :remove-event-listener]
+           (mapv :op (:ops (host/recorded dom-host)))))))
 
 (deftest host-commit-applies-insert-before-and-remove-child-ops
   ;; host/commit! (used by runtime/mount!/rerender!) calls abi/encode-batch
