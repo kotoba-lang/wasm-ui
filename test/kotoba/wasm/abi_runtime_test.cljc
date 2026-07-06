@@ -105,7 +105,8 @@
                         ["Invalid set-text" [:dom/set-text nil "hello"]]
                         ["Invalid create-fragment" [:dom/create-fragment nil]]
                         ["Invalid focus" [:dom/focus nil]]
-                        ["Invalid blur" [:dom/blur nil]]]]
+                        ["Invalid blur" [:dom/blur nil]]
+                        ["Invalid remove-attr" [:dom/remove-attr 1 nil]]]]
     (is (thrown-with-msg? clojure.lang.ExceptionInfo (re-pattern message)
                           (abi/validate-batch (abi/encode-batch [op])))))
   (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Unknown"
@@ -180,6 +181,19 @@
     (is (thrown-with-msg? clojure.lang.ExceptionInfo (re-pattern message)
                           (abi/validate-batch (abi/encode-batch [op]))))))
 
+(deftest abi-encodes-and-validates-remove-attr
+  ;; A real removeAttribute()/boolean-attribute-off setter -- previously had
+  ;; NO op->record case at all, so browser.dom-bridge's own remove-attribute
+  ;; never even attempted to emit one (see dom-attribute-removal-op-replays-
+  ;; through-abi-and-retained-state below for the end-to-end staleness this
+  ;; caused). Mirrors :set-attr's own {:op :namespace :name} record shape.
+  (is (= {:abi/version 1 :ops [{:op :remove-attr :id 1 :namespace nil :name "checked"}]}
+         (abi/encode-batch [[:dom/remove-attr 1 :checked]])))
+  (is (= {:abi/version 1 :ops [{:op :remove-attr :id 1 :namespace "style" :name "color"}]}
+         (abi/encode-batch [[:dom/remove-attr 1 :style/color]])))
+  (is (= (abi/encode-batch [[:dom/remove-attr 1 :checked]])
+         (abi/validate-batch (abi/encode-batch [[:dom/remove-attr 1 :checked]])))))
+
 (deftest abi-encodes-insert-before-and-remove-child-ops
   ;; Before this fix, kotoba.wasm.dom/insert-before and remove-child's own
   ;; emitted ops ([:dom/insert-before parent child before] /
@@ -248,6 +262,35 @@
     (testing "replaying the batch through the shared retained-state reducer clears the listener"
       (is (= {} (get-in retained-state [:listeners root]))))))
 
+(deftest dom-attribute-removal-op-replays-through-abi-and-retained-state
+  ;; The severe, invisible bug this fix closes: kotoba.wasm.dom's own
+  ;; document model correctly dissoc'd a removed attribute on the JS-facing
+  ;; side, but emitted NO op at all for it -- so the real GPU-rendered
+  ;; host's retained tree (this same retained/apply-op reducer, replayed
+  ;; from :ops by webgl.cljs/webgpu.cljs's render!) kept the attribute
+  ;; stale FOREVER once set, even though getAttribute/queries on the
+  ;; JS-facing document looked correct immediately. Confirmed via direct
+  ;; REPL reproduction before this fix: a real checkbox's `checked` attr,
+  ;; removed via browser.dom-bridge's remove-attribute, stayed
+  ;; `{:checked true}` in the replayed retained state forever.
+  (let [[root document] (dom/create-element dom/empty-document :input)
+        document (dom/set-root document root)
+        document (dom/set-attribute document root :checked "true")
+        [ops-1 document] (dom/consume-ops document)
+        retained-state-1 (reduce retained/apply-op retained/base-state (:ops (abi/encode-batch ops-1)))
+        _ (is (= {:checked "true"} (get-in retained-state-1 [:nodes root :attrs]))
+              "sanity: the retained state reflects the real set-attr op before removal")
+        document (dom/remove-attribute document root :checked)
+        [ops-2 _document] (dom/consume-ops document)
+        batch (abi/validate-batch (abi/encode-batch ops-2))
+        retained-state-2 (reduce retained/apply-op retained-state-1 (:ops batch))]
+    (testing "kotoba.wasm.dom's own document model reflects the removal"
+      (is (not (contains? (get-in document [:nodes root :attrs]) :checked))))
+    (testing "the ABI batch carries a real remove-attr op through validate-batch without throwing"
+      (is (some #(= :remove-attr (:op %)) (:ops batch))))
+    (testing "replaying the batch through the shared retained-state reducer clears the attribute -- no longer stale"
+      (is (not (contains? (get-in retained-state-2 [:nodes root :attrs]) :checked))))))
+
 (deftest host-commit-applies-add-and-remove-event-listener-ops
   ;; host/commit! (used by runtime/mount!/rerender!) calls abi/encode-batch
   ;; then applies every record to the host -- this is the exact call site
@@ -258,6 +301,21 @@
                            [:dom/add-event-listener 1 :click "handler-1"]
                            [:dom/remove-event-listener 1 :click "handler-1"]])
     (is (= [:create-element :set-root :add-event-listener :remove-event-listener]
+           (mapv :op (:ops (host/recorded dom-host)))))))
+
+(deftest host-commit-applies-remove-attr-op
+  ;; host/commit! (used by runtime/mount!/rerender!) calls abi/encode-batch
+  ;; then applies every record to the host -- this is the exact call site
+  ;; that used to silently drop a real attribute removal (no op ever
+  ;; emitted for it in the first place, so nothing here ever crashed --
+  ;; unlike the ABI-crash-class bugs above, this bug was invisible rather
+  ;; than loud).
+  (let [dom-host (host/recording-host)]
+    (host/commit! dom-host [[:dom/create-element 1 :input]
+                           [:dom/set-root 1]
+                           [:dom/set-attr 1 :checked "true"]
+                           [:dom/remove-attr 1 :checked]])
+    (is (= [:create-element :set-root :set-attr :remove-attr]
            (mapv :op (:ops (host/recorded dom-host)))))))
 
 (deftest host-commit-applies-focus-blur-set-text-and-create-fragment-ops

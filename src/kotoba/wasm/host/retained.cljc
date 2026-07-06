@@ -36,6 +36,18 @@
                                                (keyword (:name op)))]
               (:value op))
 
+    ;; Sibling gap to :set-attr above: previously entirely unhandled here
+    ;; (falling through to the default `state` below, a silent no-op) --
+    ;; a real removeAttribute()/boolean-attribute-off setter never reached
+    ;; this state layer at all before, since no op was ever emitted for
+    ;; it in the first place. Without this case, the retained tree this
+    ;; namespace's own draw-ops/renderers actually paint from would keep
+    ;; a removed attribute stale forever.
+    :remove-attr
+    (update-in state [:nodes (:id op) :attrs] dissoc (if-let [ns (:namespace op)]
+                                                        (keyword ns (:name op))
+                                                        (keyword (:name op))))
+
     :append-child
     (update-in state [:nodes (:parent op) :children] (fnil conj []) (:child op))
 

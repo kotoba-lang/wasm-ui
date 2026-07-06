@@ -36,6 +36,14 @@
          :name attr-name
          :value (str v)})
 
+      :dom/remove-attr
+      (let [[id k] xs
+            [attr-ns attr-name] (split-attr k)]
+        {:op :remove-attr
+         :id id
+         :namespace attr-ns
+         :name attr-name})
+
       :dom/append-child
       (let [[parent child] xs]
         {:op :append-child :parent parent :child child})
@@ -101,6 +109,16 @@
       :create-text (when-not (and (int? id) (string? text)) (throw (ex-info "Invalid create-text op" {:op op :id id :text text})))
       :set-root (when-not (int? id) (throw (ex-info "Invalid set-root op" {:op op :id id})))
       :set-attr (when-not (and (int? id) (seq name) (string? value)) (throw (ex-info "Invalid set-attr op" {:op op :id id :name name :value value})))
+      ;; Previously entirely unhandled here (and in op->record above): a
+      ;; real removeAttribute()/boolean-attribute-off setter had no op at
+      ;; all emitted for it (browser.dom-bridge's own remove-attribute
+      ;; just dissoc'd the JS-facing document's :attrs map, never
+      ;; `update :ops conj [...]`) -- so the real GPU-rendered host's own
+      ;; retained tree (kotoba.wasm.host.retained/apply-op, replayed from
+      ;; :ops by webgl.cljs/webgpu.cljs's render!) kept a removed
+      ;; attribute stale forever, even though the JS-facing document
+      ;; model's getAttribute/queries looked correct immediately.
+      :remove-attr (when-not (and (int? id) (seq name)) (throw (ex-info "Invalid remove-attr op" {:op op :id id :name name})))
       :append-child (when-not (and (int? parent) (int? child)) (throw (ex-info "Invalid append-child op" {:op op :parent parent :child child})))
       :remove-children (when-not (int? id) (throw (ex-info "Invalid remove-children op" {:op op :id id})))
       :remove-child (when-not (and (int? parent) (int? child)) (throw (ex-info "Invalid remove-child op" {:op op :parent parent :child child})))

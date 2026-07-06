@@ -50,6 +50,11 @@
       (assoc-in [:nodes node-id :attrs (keyword k)] v)
       (emit [:dom/set-attr node-id (keyword k) v])))
 
+(defn remove-attribute [document node-id k]
+  (-> document
+      (update-in [:nodes node-id :attrs] dissoc (keyword k))
+      (emit [:dom/remove-attr node-id (keyword k)])))
+
 (defn set-style [document node-id style]
   (reduce-kv
    (fn [document k v]
