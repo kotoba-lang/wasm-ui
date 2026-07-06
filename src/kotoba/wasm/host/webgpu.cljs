@@ -60,24 +60,30 @@
   "See kotoba.wasm.host.webgl's identical helper for the full rationale
    (shared here since the WebGPU host paints text through the same
    Canvas 2D text overlay technique). Also reused by measure-text-fn
-   below, same as that host."
+   below, same as that host. `:font-family` is interpolated ahead of
+   the same fixed system-font fallback this always used -- see
+   kotoba.wasm.host.webgl/text-font-string's own docstring for the
+   full rationale."
   [op]
   (str (when-let [fw (:font-weight op)] (when (not= "normal" fw) (str fw " ")))
        (when-let [fs (:font-style op)] (when (not= "normal" fs) (str fs " ")))
-       (:font-size op 14) "px ui-sans-serif, system-ui, sans-serif"))
+       (:font-size op 14) "px " (or (:font-family op) "ui-sans-serif, system-ui, sans-serif")))
 
 (defn- measure-text-fn
-  "Builds a (fn [text font-size font-weight font-style] width-in-px)
-   backed by `ctx`'s real `CanvasRenderingContext2D.measureText` -- see
+  "Builds a (fn [text font-size font-weight font-style font-family]
+   width-in-px) backed by `ctx`'s real
+   `CanvasRenderingContext2D.measureText` -- see
    kotoba.wasm.host.webgl's identical helper for the full rationale
    (shared here since the WebGPU host paints text through the same
    Canvas 2D text overlay technique, see render-text! below). Closes
    the same previously-documented gap that helper closes: word-wrap
-   measurement now uses the REAL, resolved font-weight/font-style, not
-   always normal-weight/upright metrics."
+   measurement now uses the REAL, resolved font-weight/font-style/
+   font-family, not always normal-weight/upright/system-default
+   metrics."
   [ctx]
-  (fn [text font-size font-weight font-style]
-    (set! (.-font ctx) (text-font-string {:font-size font-size :font-weight font-weight :font-style font-style}))
+  (fn [text font-size font-weight font-style font-family]
+    (set! (.-font ctx) (text-font-string {:font-size font-size :font-weight font-weight :font-style font-style
+                                          :font-family font-family}))
     (.-width (.measureText ctx text))))
 
 (defn- draw-text-decoration!

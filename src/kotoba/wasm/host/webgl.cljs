@@ -67,20 +67,35 @@
    restricted to the `bold`/`normal` keywords -- Canvas 2D's own `font`
    property accepts a numeric weight directly, same as real CSS.
 
+   `:font-family`, likewise now threaded through by cssom.layout, is
+   interpolated ahead of the SAME fixed `ui-sans-serif, system-ui,
+   sans-serif` fallback this always used -- a real author `font-family`
+   had ZERO visual effect no matter what a real page declared, every
+   :text draw-op hardcoding this same fallback regardless of the real,
+   cascade-computed `:style/font-family` attr, the exact same bug shape
+   already fixed for font-weight/font-style above. Passed through
+   VERBATIM (not validated against a known-font allowlist) -- a real
+   browser's own Canvas 2D `font` string accepts any author-supplied
+   family list unchanged too, falling back to a generic family (this
+   engine's own fixed fallback) only when the whole list fails to
+   resolve to an installed font, exactly matching real CSS font-stack
+   fallback behavior.
+
    Also reused by measure-text-fn below (given an equivalent map shape)
    so word-wrap MEASUREMENT and real PAINT always agree on which exact
    font string a run of text uses."
   [op]
   (str (when-let [fw (:font-weight op)] (when (not= "normal" fw) (str fw " ")))
        (when-let [fs (:font-style op)] (when (not= "normal" fs) (str fs " ")))
-       (:font-size op 14) "px ui-sans-serif, system-ui, sans-serif"))
+       (:font-size op 14) "px " (or (:font-family op) "ui-sans-serif, system-ui, sans-serif")))
 
 (defn- measure-text-fn
-  "Builds a (fn [text font-size font-weight font-style] width-in-px)
-   backed by `ctx`'s real `CanvasRenderingContext2D.measureText` --
-   passed down into cssom.layout/draw-ops (via retained/draw-ops's own
-   optional measure-text arg) so word-wrap decisions agree with the
-   real, proportional system font `render!` actually paints text with
+  "Builds a (fn [text font-size font-weight font-style font-family]
+   width-in-px) backed by `ctx`'s real
+   `CanvasRenderingContext2D.measureText` -- passed down into
+   cssom.layout/draw-ops (via retained/draw-ops's own optional
+   measure-text arg) so word-wrap decisions agree with the real,
+   proportional system font `render!` actually paints text with
    below, instead of cssom.layout's built-in per-character monospace-
    like approximation. Sets `ctx`'s `.font` via text-font-string (the
    exact same helper render!'s own :text paint case uses) before each
@@ -99,10 +114,17 @@
    REPL reproduction (a long bold string wrapped identically to the
    same string in normal weight) before this fix. cssom.layout's own
    callback contract was extended to pass font-weight/font-style
-   through; this is the real host-side half of that same change."
+   through; this is the real host-side half of that same change. Now
+   also takes a 5th `font-family` arg for the exact same reason -- an
+   author's real font-family can genuinely have different, wider/
+   narrower per-character metrics than the fixed system-font fallback
+   word-wrap measurement always assumed before, another instance of the
+   same measurement/paint disagreement class as font-weight/font-style
+   above."
   [ctx]
-  (fn [text font-size font-weight font-style]
-    (set! (.-font ctx) (text-font-string {:font-size font-size :font-weight font-weight :font-style font-style}))
+  (fn [text font-size font-weight font-style font-family]
+    (set! (.-font ctx) (text-font-string {:font-size font-size :font-weight font-weight :font-style font-style
+                                          :font-family font-family}))
     (.-width (.measureText ctx text))))
 
 (defn- rect-intersect
