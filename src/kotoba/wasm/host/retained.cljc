@@ -73,7 +73,8 @@
 (defn draw-ops
   "Projects `state`'s retained node tree to a flat draw-ops vector (see
    cssom.layout/draw-ops). `measure-text` is an OPTIONAL real
-   text-width function (`(fn [text font-size] width-in-px)`) -- e.g. one
+   text-width function (`(fn [text font-size font-weight font-style]
+   width-in-px)`) -- e.g. one
    backed by a real browser's `CanvasRenderingContext2D.measureText`,
    which the WebGL/WebGPU hosts already hold as `text-ctx` at the exact
    point they call this fn (see kotoba.wasm.host.webgl/webgpu's render!)

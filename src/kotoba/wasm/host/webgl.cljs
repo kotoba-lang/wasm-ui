@@ -51,31 +51,58 @@
     (set! (.. canvas -style -width) (str width "px"))
     (set! (.. canvas -style -height) (str height "px"))))
 
-(defn- measure-text-fn
-  "Builds a (fn [text font-size] width-in-px) backed by `ctx`'s real
-   `CanvasRenderingContext2D.measureText` -- passed down into
-   cssom.layout/draw-ops (via retained/draw-ops's own optional
-   measure-text arg) so word-wrap decisions agree with the real,
-   proportional system font `render!` actually paints text with below,
-   instead of cssom.layout's built-in per-character monospace-like
-   approximation. Sets `ctx`'s `.font` to match `font-size` before each
-   measurement, the same font string render!'s own :text paint case
-   already uses, so a measured width always corresponds to the font this
-   host is really about to paint the text in.
+(defn- text-font-string
+  "The real Canvas 2D `font` CSS-like string for a `:text` draw-op,
+   interpolating `:font-weight`/`:font-style` (cssom.layout now threads
+   both through onto every :text op) ahead of the font-size/family that
+   were always here -- before this, a real, cascade-computed CSS
+   `font-weight: bold`/`font-style: italic` had ZERO visual effect,
+   confirmed via direct REPL reproduction that the resolved :style/
+   font-weight/:style/font-style attrs existed but layout's own :text
+   draw-op never carried them at all. Absent or literally `\"normal\"`
+   (real CSS's own initial value for both properties) contributes
+   nothing to the string, matching this op's exact pre-existing
+   behavior byte-for-byte when neither property was ever set. A numeric
+   font-weight (`\"700\"`) is passed through verbatim rather than
+   restricted to the `bold`/`normal` keywords -- Canvas 2D's own `font`
+   property accepts a numeric weight directly, same as real CSS.
 
-   Known, documented, deliberately deferred limitation: cssom.layout's
-   `(fn [text font-size] ...)` callback contract has no font-weight/
-   font-style parameter at all, so THIS measurement always uses
-   NORMAL-weight, upright metrics even for text that will actually paint
-   bold/italic (see text-font-string) -- a real, if minor and rarely
-   visible, inconsistency (bold text is typically ~5-10% wider than
-   normal at the same point size) between where a line wraps and how
-   wide its real glyphs render. Fixing that needs a real, separate
-   change to the established measure-text callback contract itself, not
-   attempted here."
+   Also reused by measure-text-fn below (given an equivalent map shape)
+   so word-wrap MEASUREMENT and real PAINT always agree on which exact
+   font string a run of text uses."
+  [op]
+  (str (when-let [fw (:font-weight op)] (when (not= "normal" fw) (str fw " ")))
+       (when-let [fs (:font-style op)] (when (not= "normal" fs) (str fs " ")))
+       (:font-size op 14) "px ui-sans-serif, system-ui, sans-serif"))
+
+(defn- measure-text-fn
+  "Builds a (fn [text font-size font-weight font-style] width-in-px)
+   backed by `ctx`'s real `CanvasRenderingContext2D.measureText` --
+   passed down into cssom.layout/draw-ops (via retained/draw-ops's own
+   optional measure-text arg) so word-wrap decisions agree with the
+   real, proportional system font `render!` actually paints text with
+   below, instead of cssom.layout's built-in per-character monospace-
+   like approximation. Sets `ctx`'s `.font` via text-font-string (the
+   exact same helper render!'s own :text paint case uses) before each
+   measurement, so a measured width always corresponds to the REAL font
+   -- including real bold/italic metrics -- this host is really about
+   to paint the text in.
+
+   Closes a real, previously-documented gap: cssom.layout's OLDER
+   `(fn [text font-size] ...)` callback contract had no font-weight/
+   font-style parameter at all, so word-wrap measurement for bold/
+   italic text always used NORMAL-weight, upright metrics even though
+   the PAINT step already correctly rendered bold/italic -- a real, if
+   minor and rarely visible, inconsistency (bold text is typically
+   ~5-10% wider than normal at the same point size) between where a
+   line wraps and how wide its real glyphs render, confirmed via direct
+   REPL reproduction (a long bold string wrapped identically to the
+   same string in normal weight) before this fix. cssom.layout's own
+   callback contract was extended to pass font-weight/font-style
+   through; this is the real host-side half of that same change."
   [ctx]
-  (fn [text font-size]
-    (set! (.-font ctx) (str font-size "px ui-sans-serif, system-ui, sans-serif"))
+  (fn [text font-size font-weight font-style]
+    (set! (.-font ctx) (text-font-string {:font-size font-size :font-weight font-weight :font-style font-style}))
     (.-width (.measureText ctx text))))
 
 (defn- rect-intersect
@@ -112,26 +139,6 @@
    vertex-source above."
   [gl canvas-h {:keys [x y w h]}]
   (.scissor gl x (- canvas-h (+ y h)) w h))
-
-(defn- text-font-string
-  "The real Canvas 2D `font` CSS-like string for a `:text` draw-op,
-   interpolating `:font-weight`/`:font-style` (cssom.layout now threads
-   both through onto every :text op) ahead of the font-size/family that
-   were always here -- before this, a real, cascade-computed CSS
-   `font-weight: bold`/`font-style: italic` had ZERO visual effect,
-   confirmed via direct REPL reproduction that the resolved :style/
-   font-weight/:style/font-style attrs existed but layout's own :text
-   draw-op never carried them at all. Absent or literally `\"normal\"`
-   (real CSS's own initial value for both properties) contributes
-   nothing to the string, matching this op's exact pre-existing
-   behavior byte-for-byte when neither property was ever set. A numeric
-   font-weight (`\"700\"`) is passed through verbatim rather than
-   restricted to the `bold`/`normal` keywords -- Canvas 2D's own `font`
-   property accepts a numeric weight directly, same as real CSS."
-  [op]
-  (str (when-let [fw (:font-weight op)] (when (not= "normal" fw) (str fw " ")))
-       (when-let [fs (:font-style op)] (when (not= "normal" fs) (str fs " ")))
-       (:font-size op 14) "px ui-sans-serif, system-ui, sans-serif"))
 
 (defn- draw-text-decoration!
   "Paints `:text-decoration`'s `underline`/`overline`/`line-through` as a

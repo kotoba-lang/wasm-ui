@@ -82,8 +82,8 @@
 ;; kotoba.wasm.host.webgl/webgpu's render! already holds a real Canvas 2D
 ;; `text-ctx` at the exact point it calls retained/draw-ops (used to
 ;; actually paint text with a real proportional system font), so it can
-;; pass a (fn [text font-size] width-in-px) built from that context's
-;; real `measureText` straight through -- see those namespaces'
+;; pass a (fn [text font-size font-weight font-style] width-in-px) built
+;; from that context's real `measureText` straight through -- see those namespaces'
 ;; measure-text-fn. This proves that plumbing genuinely reaches
 ;; cssom.layout's word-wrap (not merely threaded through and dropped),
 ;; using a fake stand-in for a real Canvas measureText (an honest
@@ -105,13 +105,13 @@
           long-text-ops))
 
 (defn- fake-proportional-measure
-  "A FAKE (fn [text font-size] width-in-px), standing in for a real
-   browser's CanvasRenderingContext2D.measureText the same way
-   kotoba.wasm.host.webgl/webgpu's measure-text-fn wraps a real one --
-   'W' measures much wider per character than the rest, unlike
-   cssom.layout's built-in per-character approximation, which cannot
-   distinguish characters at all."
-  [text _font-size]
+  "A FAKE (fn [text font-size font-weight font-style] width-in-px),
+   standing in for a real browser's CanvasRenderingContext2D.measureText
+   the same way kotoba.wasm.host.webgl/webgpu's measure-text-fn wraps a
+   real one -- 'W' measures much wider per character than the rest,
+   unlike cssom.layout's built-in per-character approximation, which
+   cannot distinguish characters at all."
+  [text _font-size _font-weight _font-style]
   (reduce + 0 (map (fn [c] (if (= c \W) 16 (if (= c \space) 6 8))) text)))
 
 (deftest retained-draw-ops-without-measure-text-is-unchanged

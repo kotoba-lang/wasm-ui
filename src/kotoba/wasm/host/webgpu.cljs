@@ -56,29 +56,29 @@
      x1 y0 r g b a
      x1 y1 r g b a]))
 
-(defn- measure-text-fn
-  "Builds a (fn [text font-size] width-in-px) backed by `ctx`'s real
-   `CanvasRenderingContext2D.measureText` -- see
-   kotoba.wasm.host.webgl's identical helper for the full rationale
-   (shared here since the WebGPU host paints text through the same
-   Canvas 2D text overlay technique, see render-text! below). Same
-   known, documented limitation as that helper: this measurement always
-   uses normal-weight, upright metrics, even for text that will
-   actually paint bold/italic (see text-font-string) -- not attempted
-   here either."
-  [ctx]
-  (fn [text font-size]
-    (set! (.-font ctx) (str font-size "px ui-sans-serif, system-ui, sans-serif"))
-    (.-width (.measureText ctx text))))
-
 (defn- text-font-string
   "See kotoba.wasm.host.webgl's identical helper for the full rationale
    (shared here since the WebGPU host paints text through the same
-   Canvas 2D text overlay technique)."
+   Canvas 2D text overlay technique). Also reused by measure-text-fn
+   below, same as that host."
   [op]
   (str (when-let [fw (:font-weight op)] (when (not= "normal" fw) (str fw " ")))
        (when-let [fs (:font-style op)] (when (not= "normal" fs) (str fs " ")))
        (:font-size op 14) "px ui-sans-serif, system-ui, sans-serif"))
+
+(defn- measure-text-fn
+  "Builds a (fn [text font-size font-weight font-style] width-in-px)
+   backed by `ctx`'s real `CanvasRenderingContext2D.measureText` -- see
+   kotoba.wasm.host.webgl's identical helper for the full rationale
+   (shared here since the WebGPU host paints text through the same
+   Canvas 2D text overlay technique, see render-text! below). Closes
+   the same previously-documented gap that helper closes: word-wrap
+   measurement now uses the REAL, resolved font-weight/font-style, not
+   always normal-weight/upright metrics."
+  [ctx]
+  (fn [text font-size font-weight font-style]
+    (set! (.-font ctx) (text-font-string {:font-size font-size :font-weight font-weight :font-style font-style}))
+    (.-width (.measureText ctx text))))
 
 (defn- draw-text-decoration!
   "See kotoba.wasm.host.webgl's identical helper for the full rationale
