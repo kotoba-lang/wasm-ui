@@ -100,6 +100,61 @@
     (testing "wrong event type does not hit"
       (is (nil? (retained/hit-test s (:x button-node) (:y button-node) :input))))))
 
+(def overlay-ops
+  ;; A `position: absolute` overlay (no listener) painted directly over an
+  ;; in-flow sibling that DOES have one -- an ordinary modal/dropdown/
+  ;; tooltip-over-content layout, not an edge case.
+  (:ops
+   (abi/encode-batch
+    [[:dom/create-element 1 :div]
+     [:dom/set-root 1]
+     [:dom/set-attr 1 :style/width 200]
+     [:dom/create-element 2 :div]
+     [:dom/set-attr 2 :style/width 200]
+     [:dom/set-attr 2 :style/height 100]
+     [:dom/add-event-listener 2 :click 111]
+     [:dom/create-element 3 :div]
+     [:dom/set-attr 3 :style/position "absolute"]
+     [:dom/set-attr 3 :style/left 0]
+     [:dom/set-attr 3 :style/top 0]
+     [:dom/set-attr 3 :style/width 200]
+     [:dom/set-attr 3 :style/height 100]
+     [:dom/append-child 1 2]
+     [:dom/append-child 1 3]])))
+
+(defn overlay-state []
+  (retained/with-draw-ops
+    (reduce retained/apply-op (merge retained/base-state {:width 320}) overlay-ops)))
+
+(deftest retained-hit-test-does-not-click-through-a-listener-less-overlay
+  ;; Previously reverse-scanned draw-ops (topmost paint order) for the
+  ;; first box satisfying BOTH the point-in-box test AND already having a
+  ;; matching listener -- skipping straight past node 3 (the listener-
+  ;; less absolute overlay, topmost at this point) to node 2 (an unrelated
+  ;; sibling underneath that DOES have one), wrongly firing node 2's
+  ;; handler. Neither node 3 nor its only real ancestor (the root, node
+  ;; 1) has a click listener, so the correct result is no hit at all.
+  (is (nil? (retained/hit-test (overlay-state) 50 50 :click))))
+
+(deftest retained-hit-test-bubbles-to-a-real-ancestors-listener
+  ;; The fix must not become "an overlay never receives ANY click" --
+  ;; when the topmost hit node's OWN ancestor (not an unrelated sibling)
+  ;; has the listener, that's a real bubble and must still fire.
+  (let [ops (:ops (abi/encode-batch
+                   [[:dom/create-element 1 :div]
+                    [:dom/set-root 1]
+                    [:dom/set-attr 1 :style/width 200]
+                    [:dom/add-event-listener 1 :click 222]
+                    [:dom/create-element 2 :div]
+                    [:dom/set-attr 2 :style/position "absolute"]
+                    [:dom/set-attr 2 :style/left 0]
+                    [:dom/set-attr 2 :style/top 0]
+                    [:dom/set-attr 2 :style/width 100]
+                    [:dom/set-attr 2 :style/height 50]
+                    [:dom/append-child 1 2]]))
+        s (retained/with-draw-ops (reduce retained/apply-op (merge retained/base-state {:width 320}) ops))]
+    (is (= {:target 1 :handler 222} (retained/hit-test s 10 10 :click)))))
+
 (deftest retained-host-builds-pointer-and-focused-events
   (let [s (retained/with-draw-ops (state))
         button-node (some #(when (and (= :node (:draw/op %))

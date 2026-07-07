@@ -153,17 +153,54 @@
   (let [event (first (:events state))]
     [event (if event (update state :events subvec 1) state)]))
 
-(defn hit-test [state x y event-name]
-  (let [event-name (normalize-event-name event-name)]
-    (->> (:draw-ops state)
-         reverse
-         (some (fn [op]
-                 (when (and (= :node (:draw/op op))
-                            (<= (:x op) x (+ (:x op) (:w op)))
-                            (<= (:y op) y (+ (:y op) (:h op)))
-                            (get-in state [:listeners (:id op) event-name]))
-                   {:target (:id op)
-                    :handler (get-in state [:listeners (:id op) event-name])}))))))
+(defn- parent-index
+  "Maps every node id to its parent id, derived from each node's own
+   `:children` (the only direction `:nodes` stores). Absent from the map
+   (nil lookup) means either an untracked id or the real root, which has
+   no parent -- both correctly terminate `ancestor-chain` below."
+  [state]
+  (into {}
+        (mapcat (fn [[id node]] (map #(vector % id) (:children node)))
+                (:nodes state))))
+
+(defn- ancestor-chain
+  "`id` itself, then its parent, grandparent, etc, up to (and including)
+   the root -- stops the first time `parents` has no entry."
+  [parents id]
+  (take-while some? (iterate parents id)))
+
+(defn hit-test
+  "Finds the topmost node whose painted box contains (x,y) -- regardless
+   of whether IT has a listener -- then walks up its REAL ancestor chain
+   for the first one that does, matching real DOM hit-testing + bubbling:
+   a listener-less box always blocks (never becomes transparent to)
+   whatever happens to be painted underneath it at the same point.
+
+   Previously this reverse-scanned draw-ops (topmost paint order first)
+   for the first box satisfying BOTH the point-in-box test AND already
+   having a matching listener, skipping straight past any listener-less
+   box in between to whatever unrelated node underneath also happened to
+   contain the point -- a real click-through: a `position: absolute`
+   overlay (a modal, dropdown, tooltip panel -- an ordinary, common
+   layout, not an edge case) with no listener of its own, painted over
+   an in-flow sibling that DOES have one, let a click on the overlay's
+   own blank area silently fire the unrelated sibling underneath's
+   handler instead of hitting nothing."
+  [state x y event-name]
+  (let [event-name (normalize-event-name event-name)
+        topmost (->> (:draw-ops state)
+                     reverse
+                     (some (fn [op]
+                             (when (and (= :node (:draw/op op))
+                                        (<= (:x op) x (+ (:x op) (:w op)))
+                                        (<= (:y op) y (+ (:y op) (:h op))))
+                               (:id op)))))]
+    (when topmost
+      (let [parents (parent-index state)]
+        (some (fn [id]
+                (when-let [handler (get-in state [:listeners id event-name])]
+                  {:target id :handler handler}))
+              (ancestor-chain parents topmost))))))
 
 (defn listener-event
   ([state target event-name]
