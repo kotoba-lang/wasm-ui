@@ -13,7 +13,18 @@
   [:main.demo {:style {:padding 18 :width 620 :background "#121724"}}
    [:h1 "kotoba DOM on WebGL"]
    [:p "Reagent/re-frame style UI, rendered without DOM widgets."]
-   [:button {:on-click (fn [_] (rf/dispatch [:inc]))} "increment"]
+   [:p {:style {:padding 8 :max-width 500}}
+    "pointer-events:none proof: the orange overlay below is painted "
+    "directly on top of the increment button, fully covering it. "
+    "Previously pointer-events:none was never consulted by hit-test, "
+    "so a click here would hit nothing -- clicking anywhere in the "
+    "overlay's area should still increment the counter, since the "
+    "overlay must be fully transparent to pointer events."]
+   [:div {:style {:position "relative" :width 120 :height 30}}
+    [:button {:style {:width 120 :height 30} :on-click (fn [_] (rf/dispatch [:inc]))} "increment"]
+    [:div {:style {:position "absolute" :top 0 :left 0 :width 120 :height 30
+                  :background "#e0a458" :pointer-events "none"}}
+     "click me"]]
    [:span.value {:style {:padding 8}} @(rf/subscribe [:count])]])
 
 (defn install-model! []
