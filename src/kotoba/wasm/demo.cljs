@@ -53,7 +53,25 @@
                   :width 300 :gap 8 :background "#1c2333"}}
     [:div {:style {:width 140 :height 40 :background "#5fb3d9"}} "A"]
     [:div {:style {:width 140 :height 40 :background "#5fb3d9"}} "B"]
-    [:div {:style {:width 140 :height 40 :background "#5fb3d9"}} "C"]]])
+    [:div {:style {:width 140 :height 40 :background "#5fb3d9"}} "C"]]
+   [:p {:style {:padding 8 :max-width 500}}
+    "justify-content:space-around/space-evenly proof: previously BOTH "
+    "keywords had no branch in place-main-axis at all and silently "
+    "packed flush left, identical to flex-start. space-around (row 1) "
+    "gives each box a half-size gap at the outer edges, full-size gaps "
+    "between boxes; space-evenly (row 2) uses the SAME-size gap "
+    "everywhere, including the outer edges -- the visible difference "
+    "in edge-gap width between the two rows below is the proof."]
+   [:div {:style {:display "flex" :justify-content "space-around"
+                  :width 460 :background "#1c2333" :margin-bottom 4}}
+    [:div {:style {:width 100 :height 36 :background "#5fb3d9"}} "1"]
+    [:div {:style {:width 100 :height 36 :background "#5fb3d9"}} "2"]
+    [:div {:style {:width 100 :height 36 :background "#5fb3d9"}} "3"]]
+   [:div {:style {:display "flex" :justify-content "space-evenly"
+                  :width 460 :background "#1c2333"}}
+    [:div {:style {:width 100 :height 36 :background "#79c99e"}} "1"]
+    [:div {:style {:width 100 :height 36 :background "#79c99e"}} "2"]
+    [:div {:style {:width 100 :height 36 :background "#79c99e"}} "3"]]])
 
 (defn install-model! []
   (rf/clear!)
