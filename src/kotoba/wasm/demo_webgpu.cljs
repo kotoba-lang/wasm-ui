@@ -12,7 +12,16 @@
    [:h1 "kotoba DOM on WebGPU"]
    [:p "Same Reagent/re-frame style UI, rendered through the WebGPU host."]
    [:button {:on-click (fn [_] (rf/dispatch [:inc]))} "increment"]
-   [:span.value {:style {:padding 8}} @(rf/subscribe [:count])]])
+   [:span.value {:style {:padding 8}} @(rf/subscribe [:count])]
+   [:p {:style {:margin-top 8}}
+    "content-height proof: the tall box below extends past the host's "
+    "initial 420px :height -- previously this backend never auto-grew "
+    "the canvas to fit real content (unlike the WebGL host), so "
+    "everything past 420px silently painted off-canvas, invisible."]
+   [:div {:style {:height 500 :margin-top 8 :background "#4fd1c5"}}
+    [:p {:style {:padding 8}} "tall-content-marker (top)"]]
+   [:div#tall-content-bottom-marker {:style {:padding 8}}
+    "tall-content-marker (bottom -- visible only once auto-grow works)"]])
 
 (defn install-model! []
   (rf/clear!)
